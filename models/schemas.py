@@ -1,10 +1,11 @@
-from marshmallow import fields
+from marshmallow import ValidationError, fields, validates
 from marshmallow_sqlalchemy import SQLAlchemyAutoSchema
+from marshmallow_enum import EnumField
 from .database import db
 
 # Importa los modelos al final del archivo para evitar circularidad
 from .users import User
-from .habits import Habit
+from .habits import Habit, Frequency
 from .entries import Entry
 
 class EntrySchema(SQLAlchemyAutoSchema):
@@ -16,11 +17,11 @@ class EntrySchema(SQLAlchemyAutoSchema):
     habit = fields.Nested(lambda: HabitSchema(exclude=('entries',)))
 
 class HabitSchema(SQLAlchemyAutoSchema):
+    frequency = EnumField(Frequency, by_value=True)
     class Meta:
         model = Habit
         include_fk = True
         load_instance = True
-        #exclude = ('user',)
     
     user = fields.Nested(lambda: UserSchema(only=('id', 'name')))
     entries = fields.Nested(lambda: EntrySchema(many=True, exclude=('habit',)))

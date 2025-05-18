@@ -1,6 +1,9 @@
 from flask import Blueprint, jsonify, request
+from marshmallow import ValidationError
 from error_handler import handle_error
+from models.schemas import UserSchema
 from models.users import User
+from sqlalchemy.exc import SQLAlchemyError
 from models.extensions import db, user_schema, users_schema
 
 user_bp = Blueprint('user_bp', __name__)
@@ -13,42 +16,53 @@ def get_all_users():
 @user_bp.route("/users/<int:user_id>", methods=["GET"])
 def get_user(user_id):
     user = User.query.get_or_404(user_id)
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
     return jsonify(user_schema.dump(user))
 
 @user_bp.route("/users", methods=["POST"])
 def create_user():
     try:
-        data = user_schema.load(request.json)
-        new_user = User(**data)
+        new_user = user_schema.load(request.json, session=db.session)
         db.session.add(new_user)
         db.session.commit()
         return jsonify(user_schema.dump(new_user)), 201
     except Exception as e:
         return handle_error(str(e), 400)
-
+    
 @user_bp.route("/users/<int:user_id>", methods=["PUT"])
 def update_user(user_id):
     user = User.query.get_or_404(user_id)
     try:
-        data = user_schema.load(request.json)
-        for key, value in data.items():
-            setattr(user, key, value)
+        schema = UserSchema(session=db.session)
+        updated_user = schema.load(request.json, instance=user)
         db.session.commit()
-        return jsonify(user_schema.dump(user))
+        return jsonify(schema.dump(updated_user)), 200
+    except ValidationError as ve:
+        return handle_error(ve.messages, 400)
+    except SQLAlchemyError as se:
+        db.session.rollback()
+        return handle_error("Database error: " + str(se), 500)
     except Exception as e:
-        return handle_error(str(e), 400)
+        db.session.rollback()
+        return handle_error("Unexpected error: " + str(e), 500)
 
 @user_bp.route("/users/<int:user_id>", methods=["PATCH"])
-def partial_update_user(user_id):
+def patch_user(user_id):
     user = User.query.get_or_404(user_id)
     try:
-        data = user_schema.load(request.json, partial=True)
-        for key, value in data.items():
-            setattr(user, key, value)
+        schema = UserSchema(session=db.session)
+        updated_user = schema.load(request.json, instance=user, partial=True)
         db.session.commit()
-        return jsonify(user_schema.dump(user))
+        return jsonify(schema.dump(updated_user)), 200
+    except ValidationError as ve:
+        return handle_error(ve.messages, 400)
+    except SQLAlchemyError as se:
+        db.session.rollback()
+        return handle_error("Database error: " + str(se), 500)
     except Exception as e:
-        return handle_error(str(e), 400)
+        db.session.rollback()
+        return handle_error("Unexpected error: " + str(e), 500)
 
 @user_bp.route("/users/<int:user_id>", methods=["DELETE"])
 def delete_user(user_id):

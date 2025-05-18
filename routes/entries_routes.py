@@ -1,8 +1,11 @@
 from flask import Blueprint, jsonify, request
+from marshmallow import ValidationError
 from error_handler import handle_error
 from models.entries import Entry
+from sqlalchemy.exc import SQLAlchemyError
 from models.extensions import db, entry_schema, entries_schema
 from models.habits import Habit
+from models.schemas import EntrySchema
 
 entry_bp = Blueprint('entry_bp', __name__)
 
@@ -16,13 +19,14 @@ def get_entries():
 @entry_bp.route("/entries/<int:entry_id>", methods=["GET"])
 def get_entry(entry_id):
     entry = Entry.query.get_or_404(entry_id)
+    if not entry:
+        return jsonify({'error': 'entry not found'}), 404
     return jsonify(entry_schema.dump(entry))
 
 @entry_bp.route("/entries", methods=["POST"])
 def create_entry():
     try:
-        data = entry_schema.load(request.json)
-        new_entry = Entry(**data)
+        new_entry = entry_schema.load(request.json, session=db.session)
         db.session.add(new_entry)
         db.session.commit()
         return jsonify(entry_schema.dump(new_entry)), 201
@@ -33,25 +37,35 @@ def create_entry():
 def update_entry(entry_id):
     entry = Entry.query.get_or_404(entry_id)
     try:
-        data = entry_schema.load(request.json)
-        for key, value in data.items():
-            setattr(entry, key, value)
+        schema = EntrySchema(session=db.session)
+        updated_entry = schema.load(request.json, instance=entry)
         db.session.commit()
-        return jsonify(entry_schema.dump(entry))
+        return jsonify(schema.dump(updated_entry)), 200
+    except ValidationError as ve:
+        return handle_error(ve.messages, 400)
+    except SQLAlchemyError as se:
+        db.session.rollback()
+        return handle_error("Database error: " + str(se), 500)
     except Exception as e:
-        return handle_error(str(e), 400)
+        db.session.rollback()
+        return handle_error("Unexpected error: " + str(e), 500)
 
 @entry_bp.route("/entries/<int:entry_id>", methods=["PATCH"])
-def partial_update_entry(entry_id):
+def patch_entry(entry_id):
     entry = Entry.query.get_or_404(entry_id)
     try:
-        data = entry_schema.load(request.json, partial=True)
-        for key, value in data.items():
-            setattr(entry, key, value)
+        schema = EntrySchema(session=db.session)
+        updated_entry = schema.load(request.json, instance=entry, partial=True)
         db.session.commit()
-        return jsonify(entry_schema.dump(entry))
+        return jsonify(schema.dump(updated_entry)), 200
+    except ValidationError as ve:
+        return handle_error(ve.messages, 400)
+    except SQLAlchemyError as se:
+        db.session.rollback()
+        return handle_error("Database error: " + str(se), 500)
     except Exception as e:
-        return handle_error(str(e), 400)
+        db.session.rollback()
+        return handle_error("Unexpected error: " + str(e), 500)
 
 @entry_bp.route("/entries/<int:entry_id>", methods=["DELETE"])
 def delete_entry(entry_id):
